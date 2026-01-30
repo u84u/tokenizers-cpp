@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'  # Critical for msgpack & sentencepiece
+          submodules: 'recursive'
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -34,26 +34,36 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release
           cmake --build . --config Release --parallel $(nproc)
 
-      - name: Package Artifacts
+      - name: Package Artifacts (create folder with includes + libs and archive it)
         run: |
-          mkdir -p artifact-linux
-          # Copy headers
-          cp -r include/* artifact-linux/include/ 2>/dev/null || true
-          # Copy static libraries
-          find build -name "*.a" -exec cp {} artifact-linux/ \;
-          # Create a README for the artifact
-          echo "tokenizers-cpp Linux Build" > artifact-linux/README.txt
-          echo "Platform: Linux (Ubuntu 22.04)" >> artifact-linux/README.txt
-          echo "Build date: $(date)" >> artifact-linux/README.txt
-          echo "Compiler: $(gcc --version | head -1)" >> artifact-linux/README.txt
-          echo "CMake version: $(cmake --version | head -1)" >> artifact-linux/README.txt
+          set -euo pipefail
+          rm -rf artifact-linux release-archive-*.tar.gz
+          mkdir -p artifact-linux/include
 
-      - name: Upload build artifact
+          # copy headers (if any)
+          if [ -d include ]; then
+            cp -r include/* artifact-linux/include/ || true
+          fi
+
+          # copy static libs
+          find build -name "*.a" -exec cp --parents {} artifact-linux/ \; || true
+
+          # sanity list
+          echo "artifact-linux contents:"
+          find artifact-linux -maxdepth 3 -type f -print
+
+          # create single tar.gz archive named with tag (github.ref_name available at runtime)
+          ARCH_NAME="tokenizers-cpp-linux-${{ github.ref_name }}.tar.gz"
+          tar -C artifact-linux -czf "${ARCH_NAME}" .
+          echo "Created archive: ${ARCH_NAME}"
+          ls -lh "${ARCH_NAME}"
+
+      - name: Upload build artifact (single archive)
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
           name: tokenizers-cpp-linux
-          path: ./artifact-linux
+          path: tokenizers-cpp-linux-${{ github.ref_name }}.tar.gz
 
   create-release:
     needs: build-linux
@@ -67,8 +77,14 @@ jobs:
           name: tokenizers-cpp-linux
           path: ./release-artifact
 
-      - name: Create GitHub Release
+      - name: Inspect downloaded artifact
+        run: |
+          echo "downloaded files:"
+          ls -lh ./release-artifact || true
+          find ./release-artifact -maxdepth 2 -type f -print || true
+
+      - name: Create GitHub Release (attach the single archive)
         uses: softprops/action-gh-release@v1
         with:
-          files: ./release-artifact/**
+          files: ./release-artifact/*.tar.gz
           generate_release_notes: true
