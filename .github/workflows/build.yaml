@@ -1,0 +1,74 @@
+name: Build and Release Linux
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'  # Critical for msgpack & sentencepiece
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install CMake and build essentials
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Configure and Build
+        run: |
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake --build . --config Release --parallel $(nproc)
+
+      - name: Package Artifacts
+        run: |
+          mkdir -p artifact-linux
+          # Copy headers
+          cp -r include/* artifact-linux/include/ 2>/dev/null || true
+          # Copy static libraries
+          find build -name "*.a" -exec cp {} artifact-linux/ \;
+          # Create a README for the artifact
+          echo "tokenizers-cpp Linux Build" > artifact-linux/README.txt
+          echo "Platform: Linux (Ubuntu 22.04)" >> artifact-linux/README.txt
+          echo "Build date: $(date)" >> artifact-linux/README.txt
+          echo "Compiler: $(gcc --version | head -1)" >> artifact-linux/README.txt
+          echo "CMake version: $(cmake --version | head -1)" >> artifact-linux/README.txt
+
+      - name: Upload build artifact
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokenizers-cpp-linux
+          path: ./artifact-linux
+
+  create-release:
+    needs: build-linux
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tokenizers-cpp-linux
+          path: ./release-artifact
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./release-artifact/**
+          generate_release_notes: true

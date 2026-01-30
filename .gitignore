@@ -35,3 +35,4 @@ build
 Cargo.lock
 rust/target
 .vscode
+.idea
